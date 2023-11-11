@@ -30,7 +30,6 @@ class ClientImplementation {
   uri: string;
   clientId: string;
   storage: Storage;
-  runAfter: ?Function;
   webSocket: Class<WebSocket>;
   socket: ?WebSocket;
 
@@ -166,7 +165,7 @@ class ClientImplementation {
 
     if (connectOptions.keepAliveInterval > 0) {
       //Cast this to any to deal with flow/IDE bug: https://github.com/facebook/flow/issues/2235#issuecomment-239357626
-      this.sendPinger = new Pinger((this: any), connectOptions.keepAliveInterval, runAfter);
+      this.sendPinger = new Pinger((this: any), connectOptions.keepAliveInterval);
     }
 
     if (connectOptions.timeout) {
