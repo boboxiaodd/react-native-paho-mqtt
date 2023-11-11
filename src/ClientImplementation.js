@@ -166,7 +166,7 @@ class ClientImplementation {
 
     if (connectOptions.keepAliveInterval > 0) {
       //Cast this to any to deal with flow/IDE bug: https://github.com/facebook/flow/issues/2235#issuecomment-239357626
-      this.sendPinger = new Pinger((this: any), connectOptions.keepAliveInterval);
+      this.sendPinger = new Pinger((this: any), connectOptions.keepAliveInterval, runAfter);
     }
 
     if (connectOptions.timeout) {
