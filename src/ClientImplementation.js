@@ -30,6 +30,7 @@ class ClientImplementation {
   uri: string;
   clientId: string;
   storage: Storage;
+  runAfter: ?Function;
   webSocket: Class<WebSocket>;
   socket: ?WebSocket;
 
