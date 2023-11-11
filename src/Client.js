@@ -28,7 +28,6 @@ type ConstructorOptions = {
   uri: string,
   clientId: string,
   storage: any,
-  runAfterFun?: Function,
   webSocket?: Class<WebSocket>
 }
 
@@ -70,7 +69,7 @@ export default class Client extends EventEmitter {
    * @param {object} [storage] - object implementing getItem, setItem, removeItem in a manner compatible with localStorage
    * @param {object} [webSocket] - object implementing the W3C websocket spec
    */
-  constructor({ uri, clientId, storage,runAfter,webSocket }: ConstructorOptions) {
+  constructor({ uri, clientId, storage,webSocket }: ConstructorOptions) {
     super();
 
     if (!/^(wss?):\/\/((\[(.+)\])|([^\/]+?))(:(\d+))?(\/.*)$/.test(uri)) {
@@ -89,7 +88,7 @@ export default class Client extends EventEmitter {
       throw new Error(format(ERROR.INVALID_ARGUMENT, [clientId, 'clientId']));
     }
 
-    this._client = new ClientImplementation(uri, clientId, storage,runAfter, webSocket);
+    this._client = new ClientImplementation(uri, clientId, storage, webSocket);
 
     /**
      * @event Client#messageDelivered
