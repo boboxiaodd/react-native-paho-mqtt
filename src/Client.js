@@ -28,7 +28,7 @@ type ConstructorOptions = {
   uri: string,
   clientId: string,
   storage: any,
-  runAfterFun: function,
+  runAfterFun?: Function,
   webSocket?: Class<WebSocket>
 }
 
