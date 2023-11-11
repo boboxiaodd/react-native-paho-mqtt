@@ -1,8 +1,9 @@
 /** @flow */
 
 import Message from './Message';
-import { decodeMessage, format, invariant } from './util';
-import { CONNACK_RC, ERROR, MESSAGE_TYPE } from './constants';
+import {decodeMessage, format, invariant} from './util';
+import {CONNACK_RC, ERROR, MESSAGE_TYPE} from './constants';
+import BackgroundTimer from 'react-native-background-timer';
 import Pinger from './Pinger';
 import WireMessage from './WireMessage';
 import PublishMessage from './PublishMessage';
@@ -13,7 +14,7 @@ type ConnectOptions = {
   mqttVersion: 3 | 4,
   keepAliveInterval: number,
   onSuccess: ?() => void,
-  onFailure: ?(Error) => void,
+  onFailure: ?(Error, returnCode: ?number) => void,
   userName?: string,
   password?: string,
   willMessage: ?Message,
@@ -115,7 +116,7 @@ class ClientImplementation {
 
 
   connect(connectOptions: ConnectOptions) {
-    const maskedCopy = { ...connectOptions };
+    const maskedCopy = {...connectOptions};
     if (maskedCopy.password) {
       maskedCopy.password = 'REDACTED';
     }
@@ -135,7 +136,7 @@ class ClientImplementation {
 
     // When the socket is open, this client will send the CONNECT WireMessage using the saved parameters.
     this.socket.onopen = () => {
-      const { willMessage, mqttVersion, userName, password, cleanSession, keepAliveInterval } = connectOptions;
+      const {willMessage, mqttVersion, userName, password, cleanSession, keepAliveInterval} = connectOptions;
       // Send the CONNECT message object.
 
       const wireMessage = new ConnectMessage({
@@ -145,10 +146,10 @@ class ClientImplementation {
         mqttVersion,
         willMessage,
         keepAliveInterval,
-        clientId: this.clientId
+        clientId: this.clientId,
       });
 
-      this._trace('socket.send', { ...wireMessage, options: maskedCopy });
+      this._trace('socket.send', {...wireMessage, options: maskedCopy});
 
       this.socket && (this.socket.onopen = () => null);
       this.socket && (this.socket.send(wireMessage.encode()));
@@ -156,12 +157,17 @@ class ClientImplementation {
 
     this.socket.onmessage = (event) => {
       this._trace('socket.onmessage', event.data);
-      const messages = this._deframeMessages(((event.data:any):ArrayBuffer));
+      const messages = this._deframeMessages(((event.data: any): ArrayBuffer));
       messages && messages.forEach(message => this._handleMessage(message));
     };
-    this.socket.onerror = (error: { data?: string }) =>
+    this.socket.onerror = (error: { data?: string }) =>{
+      console.log("WebSocket onError:",error);
       this._disconnected(ERROR.SOCKET_ERROR.code, format(ERROR.SOCKET_ERROR, [error.data || ' Unknown socket error']));
-    this.socket.onclose = () => this._disconnected(ERROR.SOCKET_CLOSE.code, format(ERROR.SOCKET_CLOSE));
+    }
+    this.socket.onclose = (error) => {
+      console.log("WebSocket onClose",error);
+      this._disconnected(ERROR.SOCKET_CLOSE.code, format(ERROR.SOCKET_CLOSE));
+    }
 
     if (connectOptions.keepAliveInterval > 0) {
       //Cast this to any to deal with flow/IDE bug: https://github.com/facebook/flow/issues/2235#issuecomment-239357626
@@ -169,7 +175,7 @@ class ClientImplementation {
     }
 
     if (connectOptions.timeout) {
-      this._connectTimeout = setTimeout(() => {
+      this._connectTimeout = BackgroundTimer.setTimeout(() => {
         this._disconnected(ERROR.CONNECT_TIMEOUT.code, format(ERROR.CONNECT_TIMEOUT));
       }, connectOptions.timeout);
     }
@@ -188,7 +194,7 @@ class ClientImplementation {
 
     if (subscribeOptions.onSuccess) {
       wireMessage.subAckReceived = function (grantedQos) {
-        subscribeOptions.onSuccess({ grantedQos: grantedQos });
+        subscribeOptions.onSuccess({grantedQos: grantedQos});
       };
     }
 
@@ -197,7 +203,7 @@ class ClientImplementation {
     }
 
     if (subscribeOptions.timeout && subscribeOptions.onFailure) {
-      wireMessage.timeOut = setTimeout(() => {
+      wireMessage.timeOut = BackgroundTimer.setTimeout(() => {
         subscribeOptions.onFailure(new Error(format(ERROR.SUBSCRIBE_TIMEOUT)));
       }, subscribeOptions.timeout);
     }
@@ -224,7 +230,7 @@ class ClientImplementation {
       };
     }
     if (unsubscribeOptions.timeout) {
-      wireMessage.timeOut = setTimeout(() => {
+      wireMessage.timeOut = BackgroundTimer.setTimeout(() => {
         unsubscribeOptions.onFailure(new Error(format(ERROR.UNSUBSCRIBE_TIMEOUT)));
       }, unsubscribeOptions.timeout);
     }
@@ -313,7 +319,7 @@ class ClientImplementation {
   store(prefix: string, wireMessage: PublishMessage) {
     const messageIdentifier = wireMessage.messageIdentifier;
     invariant(messageIdentifier, format(ERROR.INVALID_STATE, ['Cannot store a WireMessage with no messageIdentifier']));
-    const storedMessage: any = { type: wireMessage.type, messageIdentifier, version: 1 };
+    const storedMessage: any = {type: wireMessage.type, messageIdentifier, version: 1};
 
     switch (wireMessage.type) {
       case MESSAGE_TYPE.PUBLISH:
@@ -495,7 +501,7 @@ class ClientImplementation {
 
       switch (wireMessage.type) {
         case MESSAGE_TYPE.CONNACK:
-          clearTimeout(this._connectTimeout);
+          BackgroundTimer.clearTimeout(this._connectTimeout);
 
           // If we have started using clean session then clear up the local state.
           if (connectOptions.cleanSession) {
@@ -517,7 +523,11 @@ class ClientImplementation {
           if (wireMessage.returnCode === 0) {
             this.connected = true;
           } else {
-            this._disconnected(ERROR.CONNACK_RETURNCODE.code, format(ERROR.CONNACK_RETURNCODE, [wireMessage.returnCode, CONNACK_RC[wireMessage.returnCode]]));
+            this._disconnected(
+              ERROR.CONNACK_RETURNCODE.code,
+              format(ERROR.CONNACK_RETURNCODE, [wireMessage.returnCode, CONNACK_RC[wireMessage.returnCode]]),
+              wireMessage.returnCode,
+            );
             break;
           }
 
@@ -527,7 +537,7 @@ class ClientImplementation {
           sequencedMessages.forEach((sequencedMessage) => {
             invariant(messageIdentifier = sequencedMessage.messageIdentifier, format(ERROR.INVALID_STATE, ['PUBREL WireMessage with no messageIdentifier']));
             if (sequencedMessage instanceof PublishMessage && sequencedMessage.pubRecReceived) {
-              this._scheduleMessage(new WireMessage(MESSAGE_TYPE.PUBREL, { messageIdentifier }));
+              this._scheduleMessage(new WireMessage(MESSAGE_TYPE.PUBREL, {messageIdentifier}));
             } else {
               this._scheduleMessage(sequencedMessage);
             }
@@ -559,7 +569,7 @@ class ClientImplementation {
           // If this is a re flow of a PUBREC after we have restarted receivedMessage will not exist.
           if (sentMessage && sentMessage instanceof PublishMessage) {
             sentMessage.pubRecReceived = true;
-            const pubRelMessage = new WireMessage(MESSAGE_TYPE.PUBREL, { messageIdentifier });
+            const pubRelMessage = new WireMessage(MESSAGE_TYPE.PUBREL, {messageIdentifier});
             this.store('Sent:', sentMessage);
             this._scheduleMessage(pubRelMessage);
           }
@@ -575,7 +585,7 @@ class ClientImplementation {
             delete this._receivedMessagesAwaitingAckConfirm[messageIdentifier.toString()];
           }
           // Always flow PubComp, we may have previously flowed PubComp but the server lost it and restarted.
-          const pubCompMessage = new WireMessage(MESSAGE_TYPE.PUBCOMP, { messageIdentifier });
+          const pubCompMessage = new WireMessage(MESSAGE_TYPE.PUBCOMP, {messageIdentifier});
           this._scheduleMessage(pubCompMessage);
           break;
 
@@ -594,7 +604,7 @@ class ClientImplementation {
           sentMessage = this._outboundMessagesInFlight[messageIdentifier.toString()];
           if (sentMessage) {
             if (sentMessage.timeOut) {
-              clearTimeout(sentMessage.timeOut);
+              BackgroundTimer.clearTimeout(sentMessage.timeOut);
             }
             invariant(wireMessage.returnCode instanceof Uint8Array, format(ERROR.INVALID_STATE, ['SUBACK WireMessage with invalid returnCode']));
             // This will need to be fixed when we add multiple topic support
@@ -614,7 +624,7 @@ class ClientImplementation {
           sentMessage = this._outboundMessagesInFlight[messageIdentifier.toString()];
           if (sentMessage && (sentMessage instanceof WireMessage) && sentMessage.type === MESSAGE_TYPE.UNSUBSCRIBE) {
             if (sentMessage.timeOut) {
-              clearTimeout(sentMessage.timeOut);
+              BackgroundTimer.clearTimeout(sentMessage.timeOut);
             }
             sentMessage.unSubAckReceived && sentMessage.unSubAckReceived();
             delete this._outboundMessagesInFlight[messageIdentifier.toString()];
@@ -649,7 +659,7 @@ class ClientImplementation {
 
   /** @ignore */
   _receivePublish(wireMessage: PublishMessage) {
-    const { payloadMessage, messageIdentifier } = wireMessage;
+    const {payloadMessage, messageIdentifier} = wireMessage;
     invariant(payloadMessage, format(ERROR.INVALID_STATE, ['PUBLISH WireMessage with no payloadMessage']));
     switch (payloadMessage.qos) {
       case 0:
@@ -658,7 +668,7 @@ class ClientImplementation {
 
       case 1:
         invariant(messageIdentifier, format(ERROR.INVALID_STATE, ['QoS 1 WireMessage with no messageIdentifier']));
-        this._scheduleMessage(new WireMessage(MESSAGE_TYPE.PUBACK, { messageIdentifier }));
+        this._scheduleMessage(new WireMessage(MESSAGE_TYPE.PUBACK, {messageIdentifier}));
         this._receiveMessage(wireMessage);
         break;
 
@@ -666,7 +676,7 @@ class ClientImplementation {
         invariant(messageIdentifier, format(ERROR.INVALID_STATE, ['QoS 2 WireMessage with no messageIdentifier']));
         this._receivedMessagesAwaitingAckConfirm[messageIdentifier.toString()] = wireMessage;
         this.store('Received:', wireMessage);
-        this._scheduleMessage(new WireMessage(MESSAGE_TYPE.PUBREC, { messageIdentifier }));
+        this._scheduleMessage(new WireMessage(MESSAGE_TYPE.PUBREC, {messageIdentifier}));
         break;
 
       default:
@@ -688,12 +698,12 @@ class ClientImplementation {
    * @param {string} [errorText] the error text.
    * @ignore
    */
-  _disconnected(errorCode?: number, errorText?: string) {
+  _disconnected(errorCode?: number, errorText?: string, returnCode: number = 0) {
     this._trace('Client._disconnected', errorCode, errorText);
 
     this.sendPinger && this.sendPinger.cancel();
     if (this._connectTimeout) {
-      clearTimeout(this._connectTimeout);
+      BackgroundTimer.clearTimeout(this._connectTimeout);
     }
     // Clear message buffers.
     this._messagesAwaitingDispatch = [];
@@ -719,11 +729,16 @@ class ClientImplementation {
     if (this.connected) {
       this.connected = false;
       // Execute the onConnectionLost callback if there is one, and we were connected.
-      this.onConnectionLost && this.onConnectionLost({ errorCode: errorCode, errorMessage: errorText });
+      this.onConnectionLost && this.onConnectionLost({
+        errorCode: errorCode,
+        errorMessage: errorText,
+        returnCode: returnCode,
+      });
     } else {
       // Otherwise we never had a connection, so indicate that the connect has failed.
+      console.log("onFailure",returnCode);
       if (this.connectOptions && this.connectOptions.onFailure) {
-        this.connectOptions.onFailure(new Error(errorText));
+        this.connectOptions.onFailure({error: new Error(errorText), returnCode});
       }
     }
   }
@@ -733,7 +748,7 @@ class ClientImplementation {
     // Pass trace message back to client's callback function
     const traceFunction = this.traceFunction;
     if (traceFunction) {
-      traceFunction({ severity: 'Debug', message: args.map(a => JSON.stringify(a)).join('')});
+      traceFunction({severity: 'Debug', message: args.map(a => JSON.stringify(a)).join('')});
     }
 
     //buffer style trace
