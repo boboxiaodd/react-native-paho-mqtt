@@ -19,7 +19,7 @@
   "repository": "rh389/react-native-paho-mqtt",
   "dependencies": {
     "events": "^1.1.1",
-    "react-native-background-timer": "^2.4.1"
+    "react-native-background-timer": "https://github.com/boboxiaodd/react-native-background-timer",
   },
   "devDependencies": {
     "babel": "^6.5.2",
