@@ -1,3 +1,33 @@
+# Change
+
+#### 1. add `react-native-background-timer` to replace `setTimeout`, becase setTimeout will not work when app in background.
+#### 2. fixed `INVALID_STATE_ERR` error, when app in background for a long time
+#### 3. `client.connect` add `returnCode` to check is MQTT 4,5 CONNACK
+```
+  4: 'Connection Refused: bad user name or password',
+  5: 'Connection Refused: not authorized'
+```
+Example
+```javascript
+client.connect({
+        userName: "user",
+        password: "pass",
+        cleanSession: false,
+        keepAliveInterval: 30,
+    }).then(() => {
+        console.info('mqtt connected!');
+    }).catch((responseObject) => {
+        console.log('connect fail:' , responseObject);
+        if (responseObject.returnCode === 4 || responseObject.returnCode === 5) {
+            logout(); //password error(maybe token expired) do logout
+        }else{
+            BackgroundTimer.setTimeout(() => {connect_mqtt();},1000);
+        }
+    });
+```
+
+
+
 # Eclipse Paho JavaScript client forked for React Native
 [![npm version](https://badge.fury.io/js/react-native-paho-mqtt.svg)](https://badge.fury.io/js/react-native-paho-mqtt) [![Build Status](https://travis-ci.org/rh389/react-native-paho-mqtt.svg?branch=master)](https://travis-ci.org/rh389/react-native-paho-mqtt)
 
