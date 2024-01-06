@@ -15,21 +15,51 @@ yarn add https://github.com/boboxiaodd/react-native-paho-mqtt
 ```
 Example
 ```javascript
-client.connect({
-        userName: "user",
-        password: "pass",
-        cleanSession: false,
-        keepAliveInterval: 30,
-    }).then(() => {
-        console.info('mqtt connected!');
-    }).catch((responseObject) => {
-        console.log('connect fail:' , responseObject);
-        if (responseObject.returnCode === 4 || responseObject.returnCode === 5) {
-            logout(); //password error(maybe token expired) do logout
-        }else{
-            BackgroundTimer.setTimeout(() => {connect_mqtt();},1000);
-        }
-    });
+import { Client } from 'react-native-paho-mqtt';
+import BackgroundTimer from 'react-native-background-timer';
+
+let client = null;
+function connect_mqtt(){
+      client.connect({
+          userName: "user",
+          password: "pass",
+          cleanSession: false,
+          keepAliveInterval: 30,
+      }).then(() => {
+          console.info('mqtt connected!');
+      }).catch((responseObject) => {
+          console.log('connect fail:' , responseObject);
+          if (responseObject.returnCode === 4 || responseObject.returnCode === 5) {
+              logout(); //password error(maybe token expired) do logout
+          }else{
+              BackgroundTimer.setTimeout(() => {connect_mqtt();},1000);
+          }
+      });
+}
+client = new Client({
+    uri: "ws://x.x.x.x/mqtt",
+    clientId: "client_id",
+    storage: {
+        setItem: (key, item) => {
+            mmkv.setString(key,item); //i use react-native-mmkv-storage , you can use other store engine
+        },
+        getItem: (key) => {
+            mmkv.getString(key)
+        },
+        removeItem: (key) => {
+            mmkv.removeItem(key);
+        },
+    }
+});
+client.on('connectionLost', (responseObject) => {
+    if (responseObject.errorCode !== 0) {
+        BackgroundTimer.setTimeout(() => {connect_mqtt();}, 1000);
+    }
+});
+client.on('messageReceived', (message) => {
+    parse_mqtt_message(message.topic,JSON.parse(message.payloadString));
+});
+connect_mqtt();
 ```
 
 
