@@ -24,8 +24,10 @@ export default class {
   _doPing() {
     this._client._trace('Pinger.doPing', 'send PINGREQ');
     if(this._client.socket) {
-      this._client.socket.send(this.pingReq);
-      this.timeout = BackgroundTimer.setTimeout(() => this._doPing(), this._keepAliveIntervalMs);
+      if(this._client.socket.readyState === WebSocket.OPEN){
+        this._client.socket.send(this.pingReq);
+        this.timeout = BackgroundTimer.setTimeout(() => this._doPing(), this._keepAliveIntervalMs); 
+      }
     }else{
       this._client._trace('Pinger.doPing', 'socket closed');
     }
