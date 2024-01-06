@@ -1,3 +1,9 @@
+# Usage
+```
+yarn add https://github.com/boboxiaodd/react-native-paho-mqtt
+```
+
+
 # Change
 
 #### 1. add `react-native-background-timer` to replace `setTimeout`, becase setTimeout will not work when app in background.
