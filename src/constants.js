@@ -14,7 +14,7 @@ export const ERROR = {
   INTERNAL_ERROR: { code: 5, text: 'AMQJS0005E Internal error. Error Message: {0}, Stack trace: {1}' },
   CONNACK_RETURNCODE: { code: 6, text: 'AMQJS0006E Bad Connack return code:{0} {1}.' },
   SOCKET_ERROR: { code: 7, text: 'AMQJS0007E Socket error:{0}.' },
-  SOCKET_CLOSE: { code: 8, text: 'AMQJS0008I Socket closed.' },
+  SOCKET_CLOSE: { code: 8, text: 'AMQJS0008I Socket closed. WebSocket code:{0}, reason:{1}, wasClean:{2}.' },
   MALFORMED_UTF: { code: 9, text: 'AMQJS0009E Malformed UTF data:{0} {1} {2}.' },
   UNSUPPORTED: { code: 10, text: 'AMQJS0010E {0} is not supported by this browser.' },
   INVALID_STATE: { code: 11, text: 'AMQJS0011E Invalid state {0}.' },
@@ -24,6 +24,18 @@ export const ERROR = {
   INVALID_STORED_DATA: { code: 15, text: 'AMQJS0015E Invalid data in local storage key={0} value={1}.' },
   INVALID_MQTT_MESSAGE_TYPE: { code: 16, text: 'AMQJS0016E Invalid MQTT message type {0}.' },
   MALFORMED_UNICODE: { code: 17, text: 'AMQJS0017E Malformed Unicode string:{0} {1}.' }
+};
+
+export const DISCONNECT_REASON = {
+  MANUAL: 'manual',
+  CONNECT_TIMEOUT: 'connect_timeout',
+  PING_TIMEOUT: 'ping_timeout',
+  CONNACK_REFUSED: 'connack_refused',
+  SOCKET_ERROR: 'socket_error',
+  SOCKET_CLOSED: 'socket_closed',
+  PROTOCOL_ERROR: 'protocol_error',
+  INTERNAL_ERROR: 'internal_error',
+  UNKNOWN: 'unknown'
 };
 
 /**

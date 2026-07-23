@@ -1,5 +1,20 @@
 export type QoS = 0 | 1 | 2;
 
+export const DisconnectReason: Readonly<{
+	MANUAL: 'manual';
+	CONNECT_TIMEOUT: 'connect_timeout';
+	PING_TIMEOUT: 'ping_timeout';
+	CONNACK_REFUSED: 'connack_refused';
+	SOCKET_ERROR: 'socket_error';
+	SOCKET_CLOSED: 'socket_closed';
+	PROTOCOL_ERROR: 'protocol_error';
+	INTERNAL_ERROR: 'internal_error';
+	UNKNOWN: 'unknown';
+}>;
+
+export type MqttDisconnectReason = typeof DisconnectReason[keyof typeof DisconnectReason];
+export type ConnectionPhase = 'connecting' | 'connected';
+
 export interface MqttStorage {
 	getItem(key: string): string | null | undefined;
 	setItem(key: string, value: string): void;
@@ -34,14 +49,30 @@ export interface UnsubscribeOptions {
 
 export interface ConnectionLostResponse {
 	errorCode: number;
-	errorMessage?: string;
+	errorMessage: string;
 	returnCode: number;
+	reason: MqttDisconnectReason;
+	phase: ConnectionPhase;
+	error: MqttError;
+	webSocketCode?: number;
+	webSocketReason?: string;
+	wasClean?: boolean;
+	socketErrorMessage?: string;
 }
 
-export interface ConnectFailure {
-	error: Error;
+export interface MqttError extends Error {
+	errorCode: number;
+	errorMessage: string;
 	returnCode: number;
+	reason: MqttDisconnectReason;
+	phase: ConnectionPhase;
+	webSocketCode?: number;
+	webSocketReason?: string;
+	wasClean?: boolean;
+	socketErrorMessage?: string;
 }
+
+export interface ConnectFailure extends ConnectionLostResponse {}
 
 export class Message {
 	constructor(payload: string | Uint8Array);
@@ -73,10 +104,14 @@ export class Client {
 	stopTrace(): void;
 
 	on(event: 'connectionLost', listener: (response: ConnectionLostResponse) => void): this;
-	on(event: 'messageReceived', listener: (message: Message) => void): this;
-	on(event: 'messageDelivered', listener: (message: Message) => void): this;
-	on(event: string, listener: (...args: unknown[]) => void): this;
+		on(event: 'messageReceived', listener: (message: Message) => void): this;
+		on(event: 'messageDelivered', listener: (message: Message) => void): this;
+		on(event: string, listener: (...args: unknown[]) => void): this;
 	once(event: 'connectionLost', listener: (response: ConnectionLostResponse) => void): this;
 	once(event: string, listener: (...args: unknown[]) => void): this;
+	removeListener(event: 'connectionLost', listener: (response: ConnectionLostResponse) => void): this;
+	removeListener(event: 'messageReceived', listener: (message: Message) => void): this;
+	removeListener(event: 'messageDelivered', listener: (message: Message) => void): this;
+	removeListener(event: string, listener: (...args: unknown[]) => void): this;
 	removeAllListeners(event?: string): this;
 }

@@ -52,7 +52,16 @@ client = new Client({
     }
 });
 client.on('connectionLost', (responseObject) => {
-    if (responseObject.errorCode !== 0) {
+    console.log('MQTT disconnected', {
+        reason: responseObject.reason,
+        phase: responseObject.phase,
+        errorCode: responseObject.errorCode,
+        returnCode: responseObject.returnCode,
+        webSocketCode: responseObject.webSocketCode,
+        webSocketReason: responseObject.webSocketReason,
+        wasClean: responseObject.wasClean,
+    });
+    if (responseObject.reason !== 'manual') {
         BackgroundTimer.setTimeout(() => {connect_mqtt();}, 1000);
     }
 });
@@ -61,6 +70,23 @@ client.on('messageReceived', (message) => {
 });
 connect_mqtt();
 ```
+
+## Connection failure details
+
+Both `connect().catch(...)` and the `connectionLost` event expose the same diagnostic fields while retaining the original `errorCode`, `errorMessage`, and `returnCode` fields:
+
+| Field | Description |
+| --- | --- |
+| `reason` | Stable category: `manual`, `connect_timeout`, `ping_timeout`, `connack_refused`, `socket_error`, `socket_closed`, `protocol_error`, `internal_error`, or `unknown`. |
+| `phase` | `connecting` when the connection never completed, otherwise `connected`. |
+| `returnCode` | MQTT 3.1.1 CONNACK return code. Values 4 and 5 indicate credential or authorization rejection. |
+| `webSocketCode` | WebSocket close code, such as 1006 for an abnormal closure. Present when the platform supplies it. |
+| `webSocketReason` | Close reason supplied by the server, or the standard meaning of the close code. |
+| `wasClean` | Whether the WebSocket implementation considered the close handshake clean. |
+| `socketErrorMessage` | Message captured from `WebSocket.onerror`, when available. |
+| `error` | An `Error` carrying the same diagnostic fields. |
+
+The keep-alive monitor reports `reason: 'ping_timeout'` when a PING request is sent and no MQTT packet is received before the next keep-alive interval.
 
 
 

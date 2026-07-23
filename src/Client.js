@@ -303,13 +303,19 @@ export default class Client extends EventEmitter {
    */
   disconnect() {
     return new Promise((resolve, reject) => {
-      this.once('connectionLost', (error) => {
+      const onConnectionLost = (error) => {
         if (error && error.errorCode !== 0) {
           return reject(error);
         }
         resolve();
-      });
-      this._client.disconnect();
+      };
+      this.once('connectionLost', onConnectionLost);
+      try {
+        this._client.disconnect();
+      } catch (error) {
+        this.removeListener('connectionLost', onConnectionLost);
+        reject(error);
+      }
     });
   }
 

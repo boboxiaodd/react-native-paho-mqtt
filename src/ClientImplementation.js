@@ -2,8 +2,9 @@
 
 import Message from './Message';
 import {decodeMessage, format, invariant} from './util';
-import {CONNACK_RC, ERROR, MESSAGE_TYPE} from './constants';
+import {CONNACK_RC, DISCONNECT_REASON, ERROR, MESSAGE_TYPE} from './constants';
 import BackgroundTimer from '@boterop/react-native-background-timer';
+import {createDisconnectResponse, getErrorMessage, getWebSocketCloseDetails} from './errors';
 import Pinger from './Pinger';
 import WireMessage from './WireMessage';
 import PublishMessage from './PublishMessage';
@@ -14,7 +15,7 @@ type ConnectOptions = {
   mqttVersion: 3 | 4,
   keepAliveInterval: number,
   onSuccess: ?() => void,
-  onFailure: ?(Error, returnCode: ?number) => void,
+  onFailure: ?(Object) => void,
   userName?: string,
   password?: string,
   willMessage: ?Message,
@@ -47,6 +48,8 @@ class ClientImplementation {
   traceFunction: ?Function;
   _msg_queue = null;
   _connectTimeout: ?number;
+  _socketErrorTimeout: ?number;
+  _socketErrorMessage: ?string;
   /* The sendPinger monitors how long we allow before we send data to prove to the server that we are alive. */
   sendPinger = null;
 
@@ -131,11 +134,13 @@ class ClientImplementation {
 
     this.connectOptions = connectOptions;
     this.connected = false;
-    this.socket = new this.webSocket(this.uri, ['mqtt' + (connectOptions.mqttVersion === 3 ? 'v3.1' : '')]);
-    this.socket.binaryType = 'arraybuffer';
+    const socket = new this.webSocket(this.uri, ['mqtt' + (connectOptions.mqttVersion === 3 ? 'v3.1' : '')]);
+    this.socket = socket;
+    this._socketErrorMessage = null;
+    socket.binaryType = 'arraybuffer';
 
     // When the socket is open, this client will send the CONNECT WireMessage using the saved parameters.
-    this.socket.onopen = () => {
+    socket.onopen = () => {
       const {willMessage, mqttVersion, userName, password, cleanSession, keepAliveInterval} = connectOptions;
       // Send the CONNECT message object.
 
@@ -151,27 +156,68 @@ class ClientImplementation {
 
       this._trace('socket.send', {...wireMessage, options: maskedCopy});
 
-      this.socket && (this.socket.onopen = () => null);
-      this.socket && (this.socket.send(wireMessage.encode()));
+      socket.onopen = () => null;
+      try {
+        socket.send(wireMessage.encode());
+      } catch (error) {
+        const socketErrorMessage = getErrorMessage(error);
+        this._disconnected(
+          ERROR.SOCKET_ERROR.code,
+          format(ERROR.SOCKET_ERROR, [socketErrorMessage]),
+          0,
+          { reason: DISCONNECT_REASON.SOCKET_ERROR, socketErrorMessage }
+        );
+      }
     };
 
-    this.socket.onmessage = (event) => {
+    socket.onmessage = (event) => {
       this._trace('socket.onmessage', event.data);
       const messages = this._deframeMessages(((event.data: any): ArrayBuffer));
       messages && messages.forEach(message => this._handleMessage(message));
     };
-    this.socket.onerror = (error: { data?: string }) =>{
-      console.log("WebSocket onError:",error);
-      this._disconnected(ERROR.SOCKET_ERROR.code, format(ERROR.SOCKET_ERROR, [error.data || ' Unknown socket error']));
-    }
-    this.socket.onclose = (error) => {
-      console.log("WebSocket onClose",error);
-      this._disconnected(ERROR.SOCKET_CLOSE.code, format(ERROR.SOCKET_CLOSE));
-    }
+    socket.onerror = (error: { data?: string }) => {
+      const socketErrorMessage = getErrorMessage(error);
+      this._socketErrorMessage = socketErrorMessage;
+      this._trace('socket.onerror', socketErrorMessage);
+
+      if (this._socketErrorTimeout) {
+        BackgroundTimer.clearTimeout(this._socketErrorTimeout);
+      }
+      // Most implementations dispatch onclose immediately after onerror. Waiting briefly
+      // preserves the WebSocket close code and reason, which onerror does not expose.
+      this._socketErrorTimeout = BackgroundTimer.setTimeout(() => {
+        this._socketErrorTimeout = null;
+        if (this.socket === socket) {
+          this._disconnected(
+            ERROR.SOCKET_ERROR.code,
+            format(ERROR.SOCKET_ERROR, [socketErrorMessage]),
+            0,
+            { reason: DISCONNECT_REASON.SOCKET_ERROR, socketErrorMessage }
+          );
+        }
+      }, 1000);
+    };
+    socket.onclose = (event) => {
+      const closeDetails = getWebSocketCloseDetails(event);
+      const socketErrorMessage = this._socketErrorMessage;
+      this._trace('socket.onclose', closeDetails);
+      this._disconnected(
+        ERROR.SOCKET_CLOSE.code,
+        format(ERROR.SOCKET_CLOSE, [
+          closeDetails.webSocketCode === undefined ? 'unknown' : closeDetails.webSocketCode,
+          closeDetails.webSocketReason,
+          closeDetails.wasClean === undefined ? 'unknown' : closeDetails.wasClean
+        ]),
+        0,
+        {...closeDetails, reason: DISCONNECT_REASON.SOCKET_CLOSED, socketErrorMessage}
+      );
+    };
 
     if (connectOptions.keepAliveInterval > 0) {
       //Cast this to any to deal with flow/IDE bug: https://github.com/facebook/flow/issues/2235#issuecomment-239357626
       this.sendPinger = new Pinger((this: any), connectOptions.keepAliveInterval);
+    } else {
+      this.sendPinger = null;
     }
 
     if (connectOptions.timeout) {
@@ -421,7 +467,9 @@ class ClientImplementation {
     let wireMessage;
     while ((wireMessage = this._messagesAwaitingDispatch.shift())) {
       this._trace('Client._socketSend', wireMessage);
-      socket && socket.send(wireMessage.encode());
+      if (!socket || !this._sendWireMessage(wireMessage)) {
+        return;
+      }
       wireMessage.onDispatched && wireMessage.onDispatched();
     }
 
@@ -481,13 +529,17 @@ class ClientImplementation {
       }
       return messages;
     } catch (error) {
-      this._disconnected(ERROR.INTERNAL_ERROR.code, format(ERROR.INTERNAL_ERROR, [error.message, error.stack.toString()]));
+      const errorMessage = getErrorMessage(error);
+      const stack = error && error.stack ? error.stack.toString() : '';
+      this._disconnected(ERROR.INTERNAL_ERROR.code, format(ERROR.INTERNAL_ERROR, [errorMessage, stack]));
     }
   }
 
   _handleMessage(wireMessage: WireMessage | PublishMessage) {
 
     this._trace('Client._handleMessage', wireMessage);
+    // Any valid MQTT packet proves the server is still reachable.
+    this.sendPinger && this.sendPinger.responseReceived();
     const connectOptions = this.connectOptions;
     invariant(connectOptions, format(ERROR.INVALID_STATE, ['_handleMessage invoked but connectOptions not set']));
 
@@ -502,6 +554,7 @@ class ClientImplementation {
       switch (wireMessage.type) {
         case MESSAGE_TYPE.CONNACK:
           BackgroundTimer.clearTimeout(this._connectTimeout);
+          this._connectTimeout = null;
 
           // If we have started using clean session then clear up the local state.
           if (connectOptions.cleanSession) {
@@ -522,6 +575,7 @@ class ClientImplementation {
           // Client connected and ready for business.
           if (wireMessage.returnCode === 0) {
             this.connected = true;
+            this.sendPinger && this.sendPinger.start();
           } else {
             this._disconnected(
               ERROR.CONNACK_RETURNCODE.code,
@@ -645,16 +699,46 @@ class ClientImplementation {
           this._disconnected(ERROR.INVALID_MQTT_MESSAGE_TYPE.code, format(ERROR.INVALID_MQTT_MESSAGE_TYPE, [wireMessage.type]));
       }
     } catch (error) {
-      this._disconnected(ERROR.INTERNAL_ERROR.code, format(ERROR.INTERNAL_ERROR, [error.message, error.stack.toString()]));
+      const errorMessage = getErrorMessage(error);
+      const stack = error && error.stack ? error.stack.toString() : '';
+      this._disconnected(ERROR.INTERNAL_ERROR.code, format(ERROR.INTERNAL_ERROR, [errorMessage, stack]));
+    }
+  }
+
+  _sendWireMessage(wireMessage: WireMessage | PublishMessage): boolean {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== 1) {
+      this._disconnected(
+        ERROR.SOCKET_CLOSE.code,
+        format(ERROR.SOCKET_CLOSE, ['unknown', 'Socket is not open', 'unknown']),
+        0,
+        { reason: DISCONNECT_REASON.SOCKET_CLOSED }
+      );
+      return false;
+    }
+
+    try {
+      socket.send(wireMessage.encode());
+      return true;
+    } catch (error) {
+      const socketErrorMessage = getErrorMessage(error);
+      this._disconnected(
+        ERROR.SOCKET_ERROR.code,
+        format(ERROR.SOCKET_ERROR, [socketErrorMessage]),
+        0,
+        { reason: DISCONNECT_REASON.SOCKET_ERROR, socketErrorMessage }
+      );
+      return false;
     }
   }
 
   /** @ignore */
   _socketSend(wireMessage: WireMessage) {
     this._trace('Client._socketSend', wireMessage);
-    this.socket && this.socket.send(wireMessage.encode());
-    // We have proved to the server we are alive.
-    this.sendPinger && this.sendPinger.reset();
+    if (this._sendWireMessage(wireMessage)) {
+      // We have proved to the server we are alive.
+      this.sendPinger && this.sendPinger.reset();
+    }
   }
 
   /** @ignore */
@@ -698,13 +782,43 @@ class ClientImplementation {
    * @param {string} [errorText] the error text.
    * @ignore
    */
-  _disconnected(errorCode?: number, errorText?: string, returnCode: number = 0) {
-    this._trace('Client._disconnected', errorCode, errorText);
+  _disconnected(errorCode?: number, errorText?: string, returnCode: number = 0, details: Object = {}) {
+    const wasConnected = this.connected;
+    if (!this.socket && !wasConnected) {
+      return;
+    }
+
+    if (errorCode === undefined) {
+      errorCode = ERROR.OK.code;
+      errorText = format(ERROR.OK);
+    }
+
+    const response = createDisconnectResponse({
+      ...details,
+      errorCode,
+      errorMessage: errorText,
+      returnCode,
+      phase: wasConnected ? 'connected' : 'connecting'
+    });
+    this._trace('Client._disconnected', {
+      errorCode: response.errorCode,
+      errorMessage: response.errorMessage,
+      reason: response.reason,
+      phase: response.phase,
+      returnCode: response.returnCode,
+      webSocketCode: response.webSocketCode
+    });
 
     this.sendPinger && this.sendPinger.cancel();
     if (this._connectTimeout) {
       BackgroundTimer.clearTimeout(this._connectTimeout);
+      this._connectTimeout = null;
     }
+    if (this._socketErrorTimeout) {
+      BackgroundTimer.clearTimeout(this._socketErrorTimeout);
+      this._socketErrorTimeout = null;
+    }
+    this._socketErrorMessage = null;
     // Clear message buffers.
     this._messagesAwaitingDispatch = [];
 
@@ -714,31 +828,28 @@ class ClientImplementation {
       this.socket.onmessage = () => null;
       this.socket.onerror = () => null;
       this.socket.onclose = () => null;
-      if (this.socket.readyState === 1) {
-        this.socket.close();
+      if (this.socket.readyState === 0 || this.socket.readyState === 1) {
+        try {
+          this.socket.close();
+        } catch (error) {
+          this._trace('socket.close failed', getErrorMessage(error));
+        }
       }
       this.socket = null;
     }
 
-    if (errorCode === undefined) {
-      errorCode = ERROR.OK.code;
-      errorText = format(ERROR.OK);
-    }
+    this.connected = false;
+    const connectOptions = this.connectOptions;
+    this.connectOptions = null;
 
     // Run any application callbacks last as they may attempt to reconnect and hence create a new socket.
-    if (this.connected) {
-      this.connected = false;
+    if (wasConnected) {
       // Execute the onConnectionLost callback if there is one, and we were connected.
-      this.onConnectionLost && this.onConnectionLost({
-        errorCode: errorCode,
-        errorMessage: errorText,
-        returnCode: returnCode,
-      });
+      this.onConnectionLost && this.onConnectionLost(response);
     } else {
       // Otherwise we never had a connection, so indicate that the connect has failed.
-      console.log("onFailure",returnCode);
-      if (this.connectOptions && this.connectOptions.onFailure) {
-        this.connectOptions.onFailure({error: new Error(errorText), returnCode});
+      if (connectOptions && connectOptions.onFailure) {
+        connectOptions.onFailure(response);
       }
     }
   }

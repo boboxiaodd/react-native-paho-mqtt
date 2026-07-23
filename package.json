@@ -36,6 +36,9 @@
     "websocket": "^1.0.24"
   },
   "jest": {
+    "moduleNameMapper": {
+      "^@boterop/react-native-background-timer$": "<rootDir>/test/backgroundTimerMock.js"
+    },
     "transform": {
       ".*": "<rootDir>/node_modules/babel-jest"
     },
