@@ -3,7 +3,7 @@
 import WireMessage from './WireMessage';
 import { MESSAGE_TYPE } from './constants';
 import ClientImplementation from './ClientImplementation';
-import BackgroundTimer from 'react-native-background-timer';
+import BackgroundTimer from '@boterop/react-native-background-timer';
 
 /**
  * Repeat keepalive requests, monitor responses.
