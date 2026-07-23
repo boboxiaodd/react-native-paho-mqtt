@@ -3,7 +3,7 @@
 import Message from './Message';
 import {decodeMessage, format, invariant} from './util';
 import {CONNACK_RC, ERROR, MESSAGE_TYPE} from './constants';
-import BackgroundTimer from 'react-native-background-timer';
+import BackgroundTimer from '@boterop/react-native-background-timer';
 import Pinger from './Pinger';
 import WireMessage from './WireMessage';
 import PublishMessage from './PublishMessage';
